@@ -75,6 +75,10 @@ PermitRootLogin yes
 PasswordAuthentication yes
 EOF
 
+# Restore default .bashrc from Debian skeleton
+cp -f /etc/skel/.bashrc /root/.bashrc 2>/dev/null || true
+chmod 644 /root/.bashrc
+
 cat <<EOF >>/etc/bash.bashrc
 
 alias ls='ls --color=auto -lh'

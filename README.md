@@ -14,7 +14,7 @@ This builder uses the precompiled [kernel](https://pkgs.postmarketos.org/package
 This has been tested to work on **Ubuntu 22.04, 24.04 and 25.04**
 - clone
   ```shell
-  git clone --recurse-submodules https://github.com/Mio-sha512/OpenStick-Builder.git
+  git clone --recurse-submodules https://github.com/mS0gxokXEsg5ysJ7J79kzWiqO1fHgFA6ZR8eEls/OpenStick-Builder.git
   cd OpenStick-Builder/
   ```
 #### Quick (Debian branch)

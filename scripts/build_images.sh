@@ -27,3 +27,7 @@ umount mnt
 # create sparse android images 
 img2simg rootfs.raw files/rootfs.bin
 img2simg boot.raw files/boot.bin
+
+# copy windows flash bat scripts
+cp -f flash_tools/* files/ 2>/dev/null || true
+

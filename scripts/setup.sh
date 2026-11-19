@@ -55,16 +55,25 @@ rm -f /var/lib/dbus/machine-id
 rm /etc/ssh/ssh_host_*
 find /var/log -type f -delete
 
-passwd -dl root
+# Unlock root and set password to 1
+passwd -u root 2>/dev/null || true
+echo "root:1" | chpasswd
 
-# Add user
+# Allow root SSH password login (cover both sshd_config and sshd_config.d)
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+mkdir -p /etc/ssh/sshd_config.d
+cat <<EOF > /etc/ssh/sshd_config.d/99-allow-root.conf
+PermitRootLogin yes
+PasswordAuthentication yes
+EOF
+
+# Add user (可选：如需彻底去掉普通用户 user，将下面 8 行删除或加 # 注释即可)
 adduser --disabled-password --comment "" user
-# Set password
 passwd user << EOD
 1
 1
 EOD
-# Add user to sudo group
 usermod -aG sudo user
 
 cat <<EOF >>/etc/bash.bashrc

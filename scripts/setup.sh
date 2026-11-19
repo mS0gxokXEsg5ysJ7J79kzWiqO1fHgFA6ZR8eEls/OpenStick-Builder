@@ -7,10 +7,10 @@ DEBCONF_NONINTERACTIVE_SEEN=true
 echo 'force-confdef' >> /etc/dpkg/dpkg.cfg
 echo 'force-confold' >> /etc/dpkg/dpkg.cfg
 
-echo 'tzdata tzdata/Areas select Etc' | debconf-set-selections
-echo 'tzdata tzdata/Zones/Etc select UTC' | debconf-set-selections
-echo "locales locales/default_environment_locale select en_US.UTF-8" | debconf-set-selections
-echo "locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8" | debconf-set-selections
+echo 'tzdata tzdata/Areas select Asia' | debconf-set-selections
+echo 'tzdata tzdata/Zones/Asia select Shanghai' | debconf-set-selections
+echo "locales locales/default_environment_locale select zh_CN.UTF-8" | debconf-set-selections
+echo "locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8, zh_CN.UTF-8 UTF-8" | debconf-set-selections
 rm -f "/etc/locale.gen"
 
 # Single apt update, upgrade, and install to reduce overhead
@@ -37,6 +37,7 @@ apt install -qqy --no-install-recommends \
     wpasupplicant \
     bash-completion \
     curl \
+	wget \
     ca-certificates \
     zram-tools \
     bc \
@@ -49,6 +50,12 @@ apt install -qqy --no-install-recommends \
 # Cleanup in one go
 apt autoremove -qqy
 apt clean
+update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 LANGUAGE=zh_CN:zh
+cat <<EOF > /etc/default/locale
+LANG=zh_CN.UTF-8
+LC_ALL=zh_CN.UTF-8
+LANGUAGE=zh_CN:zh
+EOF
 rm -rf /var/lib/apt/lists/*
 rm -f /etc/machine-id
 rm -f /var/lib/dbus/machine-id
@@ -67,14 +74,6 @@ cat <<EOF > /etc/ssh/sshd_config.d/99-allow-root.conf
 PermitRootLogin yes
 PasswordAuthentication yes
 EOF
-
-# Add user (可选：如需彻底去掉普通用户 user，将下面 8 行删除或加 # 注释即可)
-adduser --disabled-password --comment "" user
-passwd user << EOD
-1
-1
-EOD
-usermod -aG sudo user
 
 cat <<EOF >>/etc/bash.bashrc
 

@@ -1,4 +1,5 @@
-name: Build
+name: Build Debian
+run-name: "Build Debian (${{ github.ref_name }}) #${{ github.run_number }} ${{ github.event.head_commit.timestamp }}"
 
 on:
   workflow_dispatch:
@@ -84,13 +85,17 @@ jobs:
         run: sudo sh -e scripts/build_images.sh
 
       - name: Determine artifact name
-        id: artifact_name
-        run: |
-          branch="$GITHUB_REF_NAME"
+      id: artifact_name
+      run: |
+        branch="$GITHUB_REF_NAME"
+        deb_ver=$(tar -xOf rootfs.tgz ./etc/debian_version 2>/dev/null | tr -d '\r\n ' | tr '/' '-')
+        if [ -z "$deb_ver" ]; then
           deb_ver=$(tar -xOf rootfs.tgz ./etc/os-release 2>/dev/null | grep -E '^VERSION_ID=' | cut -d= -f2 | tr -d '"')
-          case "$branch" in
+        fi
+        case "$branch" in
             debian)
-              base="openstick-debian-${deb_ver}" ;;
+              # 最终推送的文件名前缀（Artifacts 与 Release 附件共用）
+              base="Openstick-Debian-${deb_ver}" ;;
             ubuntu-*)
               base="openstick-ubuntu" ;;
             *)
@@ -99,6 +104,7 @@ jobs:
               base="openstick-${sanitized}" ;;
           esac
           echo "base=$base" >> "$GITHUB_OUTPUT"
+          # 最终推送的完整压缩包文件名（.zip）
           echo "zip=${base}.zip" >> "$GITHUB_OUTPUT"
           echo "deb_ver=${deb_ver}" >> "$GITHUB_OUTPUT"
 
@@ -131,32 +137,25 @@ jobs:
         IS_RELEASE: ${{ inputs.publish_release == true }}
       run: |
         deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
-        tag="debian-${deb_ver}-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+        datetime_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
+        tag_time_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S')"
 
-        branch="$GITHUB_REF_NAME"
-        case "$branch" in
-          debian)
-            human="Debian" ;;
-          ubuntu-24.04)
-            human="Ubuntu 24.04 (Noble)" ;;
-          ubuntu-*)
-            ver="${branch#ubuntu-}"
-            human="Ubuntu ${ver}" ;;
-          *)
-            tmp="${branch//-/ }"
-            human="$(awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2)}; print}' <<< "$tmp")" ;;
-        esac
+        if [ "$IS_RELEASE" = "true" ]; then
+          # 正式发行版 (Release) 的 Tag 与页面标题（Tag 禁止空格与冒号）
+          tag="Debian-${deb_ver}_${tag_time_str}_r${GITHUB_RUN_NUMBER}"
+          title="Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+          PRERELEASE_FLAG=""
+        else
+          # 预发行版 (Pre-Release) 的 Tag 与页面标题
+          tag="Debian-${deb_ver}_${tag_time_str}_pre${GITHUB_RUN_NUMBER}"
+          title="[Pre-Release] Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+          PRERELEASE_FLAG="--prerelease"
+        fi
 
-        date_str="$(date -u +%Y-%m-%d)"
-        title="Debian ${deb_ver} - ${date_str} #${GITHUB_RUN_NUMBER}"
+        # 最终推送的 Release 页面正文说明
         notes="Automated release for commit ${GITHUB_SHA} on ${GITHUB_REF_NAME}"
 
         asset="${{ steps.artifact_name.outputs.zip }}"
-
-        PRERELEASE_FLAG="--prerelease"
-        if [ "$IS_RELEASE" = "true" ]; then
-          PRERELEASE_FLAG=""
-        fi
 
         gh release create "$tag" \
           --target "$GITHUB_SHA" \

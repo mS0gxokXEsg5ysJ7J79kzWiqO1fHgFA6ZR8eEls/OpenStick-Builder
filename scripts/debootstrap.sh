@@ -1,165 +1,130 @@
-name: Build Debian
-run-name: "Build Debian (${{ github.ref_name }}) #${{ github.run_number }} ${{ github.event.head_commit.timestamp }}"
+#!/bin/sh -e
 
-on:
-  workflow_dispatch:
-    inputs:
-      clean_build:
-        description: '是否强制清理缓存从零编译'
-        required: false
-        type: boolean
-        default: false
-      publish_prerelease:
-        description: '是否推送到预览版 (Pre-Release)'
-        required: true
-        type: boolean
-        default: true
-      publish_release:
-        description: '是否推送到发行版 (Release)'
-        required: false
-        type: boolean
-        default: false
-  push:
-    branches:
-      - '**'
-    tags:
-      - 'v*'
+CHROOT=${CHROOT=$(pwd)/rootfs}
+RELEASE=${RELEASE=stable}
+HOST_NAME=${HOST_NAME=openstick}
 
-permissions:
-  contents: write
+rm -rf ${CHROOT}
 
-jobs:
-  decide:
-    runs-on: ubuntu-24.04-arm
-    outputs:
-      skip: ${{ steps.check.outputs.skip }}
-    steps:
-      - id: check
-        name: Check commit message for skip directive
-        run: |
-          msg="${{ github.event.head_commit.message }}"
-          subject="${msg%%$'\n'*}"
-          body="${msg#*$'\n'}"
-          first_body_line="$(printf "%s" "$body" | awk 'NF{print; exit}')"
-          skip="false"
-          case "$subject" in
-            "skip build:"*) skip="true" ;;
-          esac
-          case "$first_body_line" in
-            "skip build:"*) skip="true" ;;
-          esac
-          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+# Use mmdebstrap for faster builds (god, it's so much faster)
+echo "Using mmdebstrap for fast bootstrap..."
+mmdebstrap --arch=arm64 \
+    --include=systemd,udev,dbus,apt,wget,ca-certificates \
+    --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
+    ${RELEASE} ${CHROOT}
 
-  build:
-    needs: decide
-    if: needs.decide.outputs.skip != 'true'
-    runs-on: ubuntu-24.04-arm
+cat << EOF > ${CHROOT}/etc/apt/sources.list
+deb http://deb.debian.org/debian ${RELEASE} main contrib non-free-firmware
+deb http://deb.debian.org/debian-security/ ${RELEASE}-security main contrib non-free-firmware
+deb http://deb.debian.org/debian ${RELEASE}-updates main contrib non-free-firmware
+EOF
 
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
+# Speed up apt
+cat << EOF > ${CHROOT}/etc/apt/apt.conf.d/99speedup
+APT::Acquire::Retries "3";
+APT::Acquire::http::Timeout "10";
+APT::Acquire::ftp::Timeout "10";
+Acquire::Languages "none";
+APT::Install-Recommends "false";
+APT::Install-Suggests "false";
+DPkg::Options::="--force-confdef";
+DPkg::Options::="--force-confold";
+EOF
 
-      - name: Clean build workspace
-        if: ${{ inputs.clean_build == true }}
-        run: |
-          sudo sh -e clear.sh || true
-          sudo rm -rf files rootfs.tgz
+mount -t proc proc ${CHROOT}/proc/
+mount -t sysfs sys ${CHROOT}/sys/
+mount -o bind /dev/ ${CHROOT}/dev/
+mount -o bind /dev/pts/ ${CHROOT}/dev/pts/
+mount -o bind /run ${CHROOT}/run/
 
-      - name: Install dependencies
-        run: sudo sh -e scripts/install_deps.sh
+# configs'n stuff
+mkdir -p ${CHROOT}/etc/systemd/system
+cp -a configs/system/* ${CHROOT}/etc/systemd/system
+cp configs/nftables.conf ${CHROOT}/etc/nftables.conf
+mkdir -p ${CHROOT}/etc/NetworkManager/system-connections
+mkdir -p ${CHROOT}/etc/NetworkManager/conf.d
+cp configs/*.nmconnection ${CHROOT}/etc/NetworkManager/system-connections
+chmod 0600 ${CHROOT}/etc/NetworkManager/system-connections/*
+cp configs/99-custom.conf ${CHROOT}/etc/NetworkManager/conf.d/
 
-      - name: Build hyp and aboot firmware
-        run: sudo sh -e scripts/build_hyp_aboot.sh
+# chroot setup
+cp configs/install_dnsproxy.sh ${CHROOT}
+cp scripts/setup.sh ${CHROOT}
 
-      - name: Extract firmware
-        run: sudo sh -e scripts/extract_fw.sh
+# Copy qemu static and run setup script in chroot
+cp /usr/bin/qemu-aarch64-static ${CHROOT}/usr/bin/
+chroot ${CHROOT} qemu-aarch64-static /bin/sh -c "/setup.sh"
 
-      - name: Create rootfs
-        run: sudo sh -e scripts/debootstrap.sh
+# cleanup
+for a in proc sys dev/pts dev run; do
+    umount ${CHROOT}/${a}
+done;
 
-      - name: Build gadget-tool
-        run: sudo sh -e scripts/build_gt.sh
+rm ${CHROOT}/install_dnsproxy.sh
+rm -f ${CHROOT}/setup.sh
+rm -f ${CHROOT}/usr/bin/qemu-aarch64-static
+echo -n > ${CHROOT}/root/.bash_history
 
-      - name: Create images
-        run: sudo sh -e scripts/build_images.sh
+echo ${HOST_NAME} > ${CHROOT}/etc/hostname
+sed -i "/localhost/ s/$/ ${HOST_NAME}/" ${CHROOT}/etc/hosts
 
-      - name: Determine artifact name
-        id: artifact_name
-        run: |
-          branch="$GITHUB_REF_NAME"
-          deb_ver=$(tar -xOf rootfs.tgz ./etc/debian_version 2>/dev/null | tr -d '\r\n ' | tr '/' '-')
-          if [ -z "$deb_ver" ]; then
-            deb_ver=$(tar -xOf rootfs.tgz ./etc/os-release 2>/dev/null | grep -E '^VERSION_ID=' | cut -d= -f2 | tr -d '"')
-          fi
-          case "$branch" in
-            debian)
-              # 最终推送的文件名前缀（Artifacts 与 Release 附件共用）
-              base="Openstick-Debian-${deb_ver}" ;;
-            ubuntu-*)
-              base="openstick-ubuntu" ;;
-            *)
-              # Fallback: sanitize branch for artifact naming
-              sanitized=$(echo "$branch" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-')
-              base="openstick-${sanitized}" ;;
-          esac
-          echo "base=$base" >> "$GITHUB_OUTPUT"
-          # 最终推送的完整压缩包文件名（.zip）
-          echo "zip=${base}.zip" >> "$GITHUB_OUTPUT"
-          echo "deb_ver=${deb_ver}" >> "$GITHUB_OUTPUT"
+# setup dnsmasq
+cp -a configs/dhcp.conf ${CHROOT}/etc/dnsmasq.d/dhcp.conf
 
-      - name: Zip artifact
-        env:
-          ZIP_NAME: ${{ steps.artifact_name.outputs.zip }}
-        run: |
-          python3 - << 'PY'
-          import os, zipfile
-          zip_name = os.environ['ZIP_NAME']
-          with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zf:
-              for root, _dirs, files in os.walk('files'):
-                  for f in files:
-                      full = os.path.join(root, f)
-                      arc = os.path.relpath(full, 'files')
-                      zf.write(full, arc)
-          print(f"Created {zip_name}")
-          PY
+# hosts entry for the LAN IP
+cat <<EOF >> ${CHROOT}/etc/hosts
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.artifact_name.outputs.base }}
-          path: ${{ steps.artifact_name.outputs.zip }}
+192.168.100.1	${HOST_NAME}
+EOF
 
-      - name: Create Release for this commit
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_prerelease == true || inputs.publish_release == true }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IS_RELEASE: ${{ inputs.publish_release == true }}
-        run: |
-          deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
-          datetime_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
-          tag_time_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S')"
+# add rc-local
+cp -a configs/rc.local ${CHROOT}/etc/rc.local
+chmod +x ${CHROOT}/etc/rc.local
 
-          if [ "$IS_RELEASE" = "true" ]; then
-            # 正式发行版 (Release) 的 Tag 与页面标题（Tag 禁止空格与冒号）
-            tag="Debian-${deb_ver}_${tag_time_str}_r${GITHUB_RUN_NUMBER}"
-            title="Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
-            PRERELEASE_FLAG=""
-          else
-            # 预发行版 (Pre-Release) 的 Tag 与页面标题
-            tag="Debian-${deb_ver}_${tag_time_str}_pre${GITHUB_RUN_NUMBER}"
-            title="[Pre-Release] Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
-            PRERELEASE_FLAG="--prerelease"
-          fi
+# add MSM8916 USB gadget
+cp -a configs/msm8916-usb-gadget.sh ${CHROOT}/usr/sbin/
+cp configs/msm8916-usb-gadget.conf ${CHROOT}/etc/
 
-          # 最终推送的 Release 页面正文说明
-          notes="Automated release for commit ${GITHUB_SHA} on ${GITHUB_REF_NAME}"
+# setup WiFi AP with hostapd
+mkdir -p ${CHROOT}/etc/hostapd
+cp configs/hostapd.conf ${CHROOT}/etc/hostapd/
+cp configs/wifi-ap.sh ${CHROOT}/usr/sbin/
+chmod +x ${CHROOT}/usr/sbin/wifi-ap.sh
 
-          asset="${{ steps.artifact_name.outputs.zip }}"
+cp -a scripts/msm-firmware-loader.sh ${CHROOT}/usr/sbin
 
-          gh release create "$tag" \
-            --target "$GITHUB_SHA" \
-            --title "$title" \
-            --notes "$notes" \
-            $PRERELEASE_FLAG \
-            "$asset"
+# install kernel (支持手动传入 KERNEL_URL，否则自动从 GitHub Releases/Pre-release 拉取最新 .apk)
+KERNEL_REPO="mS0gxokXEsg5ysJ7J79kzWiqO1fHgFA6ZR8eEls/OpenStick-Kernel-Compiler"
+if [ -z "${KERNEL_URL}" ]; then
+    KERNEL_URL=$(curl -sSL "https://api.github.com/repos/${KERNEL_REPO}/releases?per_page=5" \
+        | grep -oE 'https://github\.com/[^"]+\.apk' | head -n 1)
+fi
+if [ -z "${KERNEL_URL}" ]; then
+    echo "ERROR: 未找到可用的远程内核 .apk 链接" >&2
+    exit 1
+fi
+echo "Downloading kernel: ${KERNEL_URL}"
+curl -fsSL "${KERNEL_URL}" -o /tmp/kernel.apk
+tar xzf /tmp/kernel.apk -C ${CHROOT} --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null
+rm -f /tmp/kernel.apk
+
+# 动态获取解压后的内核模块目录名并生成 modules.dep
+KVER=$(ls -1 ${CHROOT}/usr/lib/modules/ | head -n 1)
+if [ -n "${KVER}" ]; then
+    depmod -b ${CHROOT} "${KVER}"
+fi
+
+mkdir -p ${CHROOT}/boot/extlinux
+cp configs/extlinux.conf ${CHROOT}/boot/extlinux
+
+# copy custom dtb's
+cp dtbs/* ${CHROOT}/boot/dtbs/qcom/
+
+# create missing directory
+mkdir -p ${CHROOT}/lib/firmware/msm-firmware-loader
+
+# update fstab
+echo "PARTUUID=80780b1d-0fe1-27d3-23e4-9244e62f8c46\t/boot\text2\tdefaults\t0 2" > ${CHROOT}/etc/fstab
+
+# backup rootfs
+tar cpzf rootfs.tgz --exclude="usr/bin/qemu-aarch64-static" -C rootfs .

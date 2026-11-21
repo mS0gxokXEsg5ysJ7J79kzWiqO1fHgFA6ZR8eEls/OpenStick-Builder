@@ -52,15 +52,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      with:
-        submodules: true
+        with:
+          submodules: true
 
       - name: Clean build workspace
         if: ${{ inputs.clean_build == true }}
         run: |
           sudo sh -e clear.sh || true
           sudo rm -rf files rootfs.tgz
-      
+
       - name: Install dependencies
         run: sudo sh -e scripts/install_deps.sh
 
@@ -80,14 +80,14 @@ jobs:
         run: sudo sh -e scripts/build_images.sh
 
       - name: Determine artifact name
-      id: artifact_name
-      run: |
-        branch="$GITHUB_REF_NAME"
-        deb_ver=$(tar -xOf rootfs.tgz ./etc/debian_version 2>/dev/null | tr -d '\r\n ' | tr '/' '-')
-        if [ -z "$deb_ver" ]; then
-          deb_ver=$(tar -xOf rootfs.tgz ./etc/os-release 2>/dev/null | grep -E '^VERSION_ID=' | cut -d= -f2 | tr -d '"')
-        fi
-        case "$branch" in
+        id: artifact_name
+        run: |
+          branch="$GITHUB_REF_NAME"
+          deb_ver=$(tar -xOf rootfs.tgz ./etc/debian_version 2>/dev/null | tr -d '\r\n ' | tr '/' '-')
+          if [ -z "$deb_ver" ]; then
+            deb_ver=$(tar -xOf rootfs.tgz ./etc/os-release 2>/dev/null | grep -E '^VERSION_ID=' | cut -d= -f2 | tr -d '"')
+          fi
+          case "$branch" in
             debian)
               # 最终推送的文件名前缀（Artifacts 与 Release 附件共用）
               base="Openstick-Debian-${deb_ver}" ;;
@@ -126,35 +126,35 @@ jobs:
           path: ${{ steps.artifact_name.outputs.zip }}
 
       - name: Create Release for this commit
-      if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_prerelease == true || inputs.publish_release == true }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        IS_RELEASE: ${{ inputs.publish_release == true }}
-      run: |
-        deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
-        datetime_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
-        tag_time_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S')"
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_prerelease == true || inputs.publish_release == true }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_RELEASE: ${{ inputs.publish_release == true }}
+        run: |
+          deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
+          datetime_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
+          tag_time_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S')"
 
-        if [ "$IS_RELEASE" = "true" ]; then
-          # 正式发行版 (Release) 的 Tag 与页面标题（Tag 禁止空格与冒号）
-          tag="Debian-${deb_ver}_${tag_time_str}_r${GITHUB_RUN_NUMBER}"
-          title="Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
-          PRERELEASE_FLAG=""
-        else
-          # 预发行版 (Pre-Release) 的 Tag 与页面标题
-          tag="Debian-${deb_ver}_${tag_time_str}_pre${GITHUB_RUN_NUMBER}"
-          title="[Pre-Release] Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
-          PRERELEASE_FLAG="--prerelease"
-        fi
+          if [ "$IS_RELEASE" = "true" ]; then
+            # 正式发行版 (Release) 的 Tag 与页面标题（Tag 禁止空格与冒号）
+            tag="Debian-${deb_ver}_${tag_time_str}_r${GITHUB_RUN_NUMBER}"
+            title="Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+            PRERELEASE_FLAG=""
+          else
+            # 预发行版 (Pre-Release) 的 Tag 与页面标题
+            tag="Debian-${deb_ver}_${tag_time_str}_pre${GITHUB_RUN_NUMBER}"
+            title="[Pre-Release] Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+            PRERELEASE_FLAG="--prerelease"
+          fi
 
-        # 最终推送的 Release 页面正文说明
-        notes="Automated release for commit ${GITHUB_SHA} on ${GITHUB_REF_NAME}"
+          # 最终推送的 Release 页面正文说明
+          notes="Automated release for commit ${GITHUB_SHA} on ${GITHUB_REF_NAME}"
 
-        asset="${{ steps.artifact_name.outputs.zip }}"
+          asset="${{ steps.artifact_name.outputs.zip }}"
 
-        gh release create "$tag" \
-          --target "$GITHUB_SHA" \
-          --title "$title" \
-          --notes "$notes" \
-          $PRERELEASE_FLAG \
-          "$asset"
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$title" \
+            --notes "$notes" \
+            $PRERELEASE_FLAG \
+            "$asset"

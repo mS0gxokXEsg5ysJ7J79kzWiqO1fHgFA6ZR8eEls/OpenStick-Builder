@@ -93,9 +93,26 @@ chmod +x ${CHROOT}/usr/sbin/wifi-ap.sh
 
 cp -a scripts/msm-firmware-loader.sh ${CHROOT}/usr/sbin
 
-# install kernel
-wget -O - https://github.com/Mio-sha512/openstick-stuff/raw/refs/heads/main/builder-stuff/linux-postmarketos-qcom-msm8916-6.12.1-cpr.apk \
-    | tar xkzf - -C ${CHROOT} --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null
+# install kernel (支持手动传入 KERNEL_URL，否则自动从 GitHub Releases/Pre-release 拉取最新 .apk)
+KERNEL_REPO="mS0gxokXEsg5ysJ7J79kzWiqO1fHgFA6ZR8eEls/OpenStick-Kernel-Compiler"
+if [ -z "${KERNEL_URL}" ]; then
+    KERNEL_URL=$(curl -sSL "https://api.github.com/repos/${KERNEL_REPO}/releases?per_page=5" \
+        | grep -oE 'https://github\.com/[^"]+\.apk' | head -n 1)
+fi
+if [ -z "${KERNEL_URL}" ]; then
+    echo "ERROR: 未找到可用的远程内核 .apk 链接" >&2
+    exit 1
+fi
+echo "Downloading kernel: ${KERNEL_URL}"
+curl -fsSL "${KERNEL_URL}" -o /tmp/kernel.apk
+tar xzf /tmp/kernel.apk -C ${CHROOT} --exclude=.PKGINFO --exclude=.SIGN* 2>/dev/null
+rm -f /tmp/kernel.apk
+
+# 动态获取解压后的内核模块目录名并生成 modules.dep
+KVER=$(ls -1 ${CHROOT}/usr/lib/modules/ | head -n 1)
+if [ -n "${KVER}" ]; then
+    depmod -b ${CHROOT} "${KVER}"
+fi
 
 mkdir -p ${CHROOT}/boot/extlinux
 cp configs/extlinux.conf ${CHROOT}/boot/extlinux

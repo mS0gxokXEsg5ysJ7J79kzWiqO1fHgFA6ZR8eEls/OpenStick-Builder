@@ -2,6 +2,22 @@ name: Build
 
 on:
   workflow_dispatch:
+    inputs:
+      clean_build:
+        description: '是否强制清理缓存从零编译'
+        required: false
+        type: boolean
+        default: false
+      publish_prerelease:
+        description: '是否推送到预览版 (Pre-Release)'
+        required: true
+        type: boolean
+        default: true
+      publish_release:
+        description: '是否推送到发行版 (Release)'
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - '**'
@@ -40,9 +56,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+      with:
+        submodules: true
 
+      - name: Clean build workspace
+        if: ${{ inputs.clean_build == true }}
+        run: |
+          sudo sh -e clear.sh || true
+          sudo rm -rf files rootfs.tgz
+      
       - name: Install dependencies
         run: sudo sh -e scripts/install_deps.sh
 
@@ -103,36 +125,42 @@ jobs:
           path: ${{ steps.artifact_name.outputs.zip }}
 
       - name: Create Release for this commit
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="debian-13-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"run: |
-          deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
-          tag="debian-${deb_ver}-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+      if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_prerelease == true || inputs.publish_release == true }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        IS_RELEASE: ${{ inputs.publish_release == true }}
+      run: |
+        deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
+        tag="debian-${deb_ver}-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
 
-          branch="$GITHUB_REF_NAME"
-          case "$branch" in
-            debian)
-              human="Debian" ;;
-            ubuntu-24.04)
-              human="Ubuntu 24.04 (Noble)" ;;
-            ubuntu-*)
-              ver="${branch#ubuntu-}"
-              human="Ubuntu ${ver}" ;;
-            *)
-              tmp="${branch//-/ }"
-              human="$(awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2)}; print}' <<< "$tmp")" ;;
-          esac
+        branch="$GITHUB_REF_NAME"
+        case "$branch" in
+          debian)
+            human="Debian" ;;
+          ubuntu-24.04)
+            human="Ubuntu 24.04 (Noble)" ;;
+          ubuntu-*)
+            ver="${branch#ubuntu-}"
+            human="Ubuntu ${ver}" ;;
+          *)
+            tmp="${branch//-/ }"
+            human="$(awk '{for(i=1;i<=NF;i++){ $i=toupper(substr($i,1,1)) substr($i,2)}; print}' <<< "$tmp")" ;;
+        esac
 
-          date_str="$(date -u +%Y-%m-%d)"
-          title="Debian ${deb_ver} - ${date_str} #${GITHUB_RUN_NUMBER}"
-          notes="Automated release for commit ${GITHUB_SHA} on ${GITHUB_REF_NAME}"
+        date_str="$(date -u +%Y-%m-%d)"
+        title="Debian ${deb_ver} - ${date_str} #${GITHUB_RUN_NUMBER}"
+        notes="Automated release for commit ${GITHUB_SHA} on ${GITHUB_REF_NAME}"
 
-          asset="${{ steps.artifact_name.outputs.zip }}"
+        asset="${{ steps.artifact_name.outputs.zip }}"
 
-          gh release create "$tag" \
-            --target "$GITHUB_SHA" \
-            --title "$title" \
-            --notes "$notes" \
-            --prerelease \
-            "$asset"
+        PRERELEASE_FLAG="--prerelease"
+        if [ "$IS_RELEASE" = "true" ]; then
+          PRERELEASE_FLAG=""
+        fi
+
+        gh release create "$tag" \
+          --target "$GITHUB_SHA" \
+          --title "$title" \
+          --notes "$notes" \
+          $PRERELEASE_FLAG \
+          "$asset"

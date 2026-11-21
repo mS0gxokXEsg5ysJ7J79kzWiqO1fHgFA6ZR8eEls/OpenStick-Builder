@@ -65,9 +65,10 @@ jobs:
         id: artifact_name
         run: |
           branch="$GITHUB_REF_NAME"
+          deb_ver=$(tar -xOf rootfs.tgz ./etc/os-release 2>/dev/null | grep -E '^VERSION_ID=' | cut -d= -f2 | tr -d '"')
           case "$branch" in
             debian)
-              base="openstick-debian" ;;
+              base="openstick-debian-${deb_ver}" ;;
             ubuntu-*)
               base="openstick-ubuntu" ;;
             *)
@@ -77,6 +78,7 @@ jobs:
           esac
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "zip=${base}.zip" >> "$GITHUB_OUTPUT"
+          echo "deb_ver=${deb_ver}" >> "$GITHUB_OUTPUT"
 
       - name: Zip artifact
         env:
@@ -104,7 +106,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          tag="build-${GITHUB_SHA}"
+          tag="debian-13-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"run: |
+          deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
+          tag="debian-${deb_ver}-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
 
           branch="$GITHUB_REF_NAME"
           case "$branch" in
@@ -121,7 +125,7 @@ jobs:
           esac
 
           date_str="$(date -u +%Y-%m-%d)"
-          title="${human} build: ${date_str}"
+          title="Debian ${deb_ver} - ${date_str} #${GITHUB_RUN_NUMBER}"
           notes="Automated release for commit ${GITHUB_SHA} on ${GITHUB_REF_NAME}"
 
           asset="${{ steps.artifact_name.outputs.zip }}"

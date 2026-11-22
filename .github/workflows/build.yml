@@ -81,16 +81,23 @@ jobs:
 
       - name: Determine artifact name
         id: artifact_name
+        env:
+          IS_RELEASE: ${{ inputs.publish_release == true }}
         run: |
           branch="$GITHUB_REF_NAME"
           deb_ver=$(tar -xOf rootfs.tgz ./etc/debian_version 2>/dev/null | tr -d '\r\n ' | tr '/' '-')
           if [ -z "$deb_ver" ]; then
             deb_ver=$(tar -xOf rootfs.tgz ./etc/os-release 2>/dev/null | grep -E '^VERSION_ID=' | cut -d= -f2 | tr -d '"')
           fi
+          ts="$(TZ='Asia/Shanghai' date +'%y%m%d-%H%M%S')"
+          suffix="p${GITHUB_RUN_NUMBER}"
+          if [ "$IS_RELEASE" = "true" ]; then
+            suffix="r${GITHUB_RUN_NUMBER}"
+          fi
           case "$branch" in
             debian)
               # 最终推送的文件名前缀（Artifacts 与 Release 附件共用）
-              base="Openstick-Debian-${deb_ver}" ;;
+              base="Debian-${deb_ver}_${ts}_${suffix}" ;;
             ubuntu-*)
               base="openstick-ubuntu" ;;
             *)
@@ -132,18 +139,18 @@ jobs:
           IS_RELEASE: ${{ inputs.publish_release == true }}
         run: |
           deb_ver="${{ steps.artifact_name.outputs.deb_ver }}"
-          datetime_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
-          tag_time_str="$(TZ='Asia/Shanghai' date +'%Y-%m-%d_%H-%M-%S')"
+          datetime_str="$(TZ='Asia/Shanghai' date +'%y-%m-%d %H:%M:%S')"
+          tag_time_str="$(TZ='Asia/Shanghai' date +'%y%m%d-%H%M%S')"
 
           if [ "$IS_RELEASE" = "true" ]; then
-            # 正式发行版 (Release) 的 Tag 与页面标题（Tag 禁止空格与冒号）
+            # 正式发行版 (Release) 的 Tag 与页面标题
             tag="Debian-${deb_ver}_${tag_time_str}_r${GITHUB_RUN_NUMBER}"
-            title="Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+            title="Debian ${deb_ver} ${datetime_str} (#${GITHUB_RUN_NUMBER})"
             PRERELEASE_FLAG=""
           else
             # 预发行版 (Pre-Release) 的 Tag 与页面标题
-            tag="Debian-${deb_ver}_${tag_time_str}_pre${GITHUB_RUN_NUMBER}"
-            title="[Pre-Release] Debian ${deb_ver} - ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+            tag="Debian-${deb_ver}_${tag_time_str}_p${GITHUB_RUN_NUMBER}"
+            title="[Pre-Release] Debian ${deb_ver} ${datetime_str} (#${GITHUB_RUN_NUMBER})"
             PRERELEASE_FLAG="--prerelease"
           fi
 

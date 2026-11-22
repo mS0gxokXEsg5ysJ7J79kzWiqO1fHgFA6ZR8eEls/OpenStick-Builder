@@ -1,5 +1,5 @@
-name: Build Debian
-run-name: "Build Debian #${{ github.run_number }}"
+name: Build OpenStick Debian
+run-name: "Build OpenStick Debian #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -97,7 +97,7 @@ jobs:
           case "$branch" in
             debian)
               # 最终推送的文件名前缀（Artifacts 与 Release 附件共用）
-              base="OpenStick-Debian-${deb_ver}_${ts}_${suffix}" ;;
+              base="OpenStick-Debian-${deb_ver}-${suffix}" ;;
             ubuntu-*)
               base="openstick-ubuntu" ;;
             *)
@@ -144,13 +144,13 @@ jobs:
 
           if [ "$IS_RELEASE" = "true" ]; then
             # 正式发行版 (Release) 的 Tag 与页面标题
-            tag="OpenStick-Debian-${deb_ver}_${tag_time_str}_r${GITHUB_RUN_NUMBER}"
-            title="OpenStick Debian ${deb_ver} ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+            tag="OpenStick-Debian-${deb_ver}-r${GITHUB_RUN_NUMBER}"
+            title="OpenStick Debian ${deb_ver} ${GITHUB_RUN_NUMBER} (${datetime_str})"
             PRERELEASE_FLAG=""
           else
             # 预发行版 (Pre-Release) 的 Tag 与页面标题
-            tag="OpenStick-Debian-${deb_ver}_${tag_time_str}_p${GITHUB_RUN_NUMBER}"
-            title="[Pre-Release] OpenStick Debian ${deb_ver} ${datetime_str} (#${GITHUB_RUN_NUMBER})"
+            tag="OpenStick-Debian-${deb_ver}-p${GITHUB_RUN_NUMBER}"
+            title="OpenStick Debian ${deb_ver} Pre-release: ${GITHUB_RUN_NUMBER} (${datetime_str})"
             PRERELEASE_FLAG="--prerelease"
           fi
 

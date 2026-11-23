@@ -245,6 +245,80 @@ net.ipv4.tcp_keepalive_intvl=10
 net.ipv4.tcp_keepalive_probes=3
 EOF
 
+# ========================== 固化 Wi-Fi 24/7 稳定性优化 ==========================
+# 1. 写入 cfg80211 国家码模块参数与 NetworkManager 全局防随机 MAC 配置
+mkdir -p /etc/modprobe.d /etc/NetworkManager/conf.d /etc/NetworkManager/system-connections
+echo "options cfg80211 ieee80211_regdom=CN" > /etc/modprobe.d/cfg80211.conf
+cat <<'EOF' > /etc/NetworkManager/conf.d/99-wifi-stable.conf
+[device]
+wifi.scan-rand-mac-address=no
+EOF
+
+# 2. 部署三级自愈 Wi-Fi 网关断流看门狗脚本与 systemd 定时器
+cat <<'WATCHDOG' > /opt/wifi-watchdog.sh
+#!/bin/bash
+WLAN_IF="wlan0"
+CONN_NAME="410-WiFi"
+WIFI_DRIVER="wcn36xx"
+FAIL_FILE="/tmp/wifi_fail_count"
+
+# 若尚未配置目标 Wi-Fi 连接，直接退出防止首次开机误触发重启
+nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$CONN_NAME" || exit 0
+
+GW=$(ip route show default dev "$WLAN_IF" | awk '{print $3}' | head -n 1)
+if [ -n "$GW" ] && ping -c 3 -W 2 -I "$WLAN_IF" "$GW" >/dev/null 2>&1; then
+    rm -f "$FAIL_FILE"
+    exit 0
+fi
+
+FAILS=$(cat "$FAIL_FILE" 2>/dev/null || echo 0)
+FAILS=$((FAILS + 1))
+echo "$FAILS" > "$FAIL_FILE"
+
+if [ "$FAILS" -le 2 ]; then
+    logger -t wifi-watchdog "Gateway unreachable ($FAILS/3), reconnecting $CONN_NAME..."
+    nmcli connection down "$CONN_NAME" >/dev/null 2>&1 || true
+    sleep 2
+    nmcli connection up "$CONN_NAME" >/dev/null 2>&1 || true
+elif [ "$FAILS" -eq 3 ]; then
+    logger -t wifi-watchdog "Reconnect failed 3 times, reloading $WIFI_DRIVER driver..."
+    modprobe -r "$WIFI_DRIVER" >/dev/null 2>&1 || true
+    sleep 2
+    modprobe "$WIFI_DRIVER" >/dev/null 2>&1 || true
+    sleep 3
+    nmcli connection up "$CONN_NAME" >/dev/null 2>&1 || true
+else
+    logger -t wifi-watchdog "Driver reload failed, rebooting system..."
+    rm -f "$FAIL_FILE"
+    /sbin/reboot
+fi
+WATCHDOG
+chmod +x /opt/wifi-watchdog.sh
+
+cat <<'SVC' > /etc/systemd/system/wifi-watchdog.service
+[Unit]
+Description=WiFi Gateway Watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/opt/wifi-watchdog.sh
+SVC
+
+cat <<'TMR' > /etc/systemd/system/wifi-watchdog.timer
+[Unit]
+Description=Run WiFi Watchdog every 5min
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+TMR
+
+systemctl enable wifi-watchdog.timer
+# ==============================================================================
+
 # 设置默认 DNS（必须放在脚本末尾，避免影响 chroot 构建期联网）
 rm -f /etc/resolv.conf
 cat <<EOF > /etc/resolv.conf

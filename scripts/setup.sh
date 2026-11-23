@@ -51,6 +51,7 @@ apt install -qqy --no-install-recommends \
 	openssh-server \
 	bind9-dnsutils \
 	linux-libc-dev \
+	wireless-regdb \
 	network-manager \
 	ca-certificates \
 	build-essential \
@@ -59,6 +60,9 @@ apt install -qqy --no-install-recommends \
 	systemd-timesyncd \
 	netcat-traditional \
 	mobile-broadband-provider-info
+
+# 切换为上游签名的无线监管域数据库（匹配 6.12 内核内置证书，解决 country 00 验签失败）
+update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream || true
 
 # 清理无用依赖、缓存、临时日志及机器唯一标识（确保刷机后重新生成）
 apt autoremove -qqy
@@ -79,13 +83,15 @@ find /var/log -type f -delete
 passwd -u root 2>/dev/null || true
 echo "root:1" | chpasswd
 
-# 允许 root 通过 SSH 密码登录（同时覆盖主配置与子配置目录）
+# 允许 root 通过 SSH 密码登录，并关闭 DNS 反向解析与 GSSAPI（防止 WinSCP/SSH 认证卡顿）
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 mkdir -p /etc/ssh/sshd_config.d
 cat <<EOF > /etc/ssh/sshd_config.d/99-allow-root.conf
 PermitRootLogin yes
 PasswordAuthentication yes
+UseDNS no
+GSSAPIAuthentication no
 EOF
 
 # 恢复 root 默认 .bashrc 并追加常用彩色终端别名
@@ -114,6 +120,9 @@ Storage=volatile
 RuntimeMaxUse=8M
 EOF
 
+# 缩短 systemd 关机/重启等待服务停止的超时时间（从 90 秒降至 10 秒）
+sed -i 's/^#\?DefaultTimeoutStopSec=.*/DefaultTimeoutStopSec=10s/' /etc/systemd/system.conf
+
 # 启用 earlyoom 防内存耗尽假死，屏蔽后台 apt 自动更新避免突发吃内存
 systemctl enable earlyoom || true
 systemctl mask apt-daily.timer apt-daily-upgrade.timer || true
@@ -134,12 +143,35 @@ if [ ! -f /etc/systemd/system/vocat.service ] && [ ! -f /lib/systemd/system/voca
     exit 1
 fi
 
-# 启用网络管理、DHCP/DNS（br0 网桥）、防火墙及读卡器服务，默认关闭热点
+# 启用网络管理、DHCP/DNS（br0 网桥）、防火墙及读卡器服务
 systemctl enable NetworkManager || true
 systemctl enable dnsmasq
 systemctl enable nftables
-systemctl disable hostapd || true
 systemctl enable pcscd.socket || true
+
+# 默认屏蔽 hostapd（防止抢占 wlan0），同时完整保留 /etc/hostapd 配置与服务备份便于日后恢复
+systemctl disable hostapd 2>/dev/null || true
+if [ -f /etc/systemd/system/hostapd.service ] && [ ! -L /etc/systemd/system/hostapd.service ]; then
+    mv /etc/systemd/system/hostapd.service /etc/systemd/system/hostapd.service.bak
+fi
+systemctl mask hostapd || true
+
+# 开机自动设置 Wi-Fi 监管域为 CN（完整支持 1~13 信道）
+cat <<'EOF' > /etc/systemd/system/wifi-regdom.service
+[Unit]
+Description=开机设置 Wi-Fi 监管域为 CN
+After=network-pre.target
+Before=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iw reg set CN
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable wifi-regdom.service
 
 # 开机自动唤醒 QMI 调制解调器进入在线模式（供 VoCat 直接调用）
 cat <<'EOF' > /etc/systemd/system/modem-online.service

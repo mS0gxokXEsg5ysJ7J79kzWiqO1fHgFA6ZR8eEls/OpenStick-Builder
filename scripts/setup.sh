@@ -129,7 +129,7 @@ rm -f /tmp/vocat_install.sh
 for svc in /etc/systemd/system/*vocat*.service /lib/systemd/system/*vocat*.service; do
     [ -f "$svc" ] && systemctl enable "$(basename "$svc")" || true
 done
-if ! ls /etc/systemd/system/*vocat*.service /lib/systemd/system/*vocat*.service >/dev/null 2>&1; then
+if [ ! -f /etc/systemd/system/vocat.service ] && [ ! -f /lib/systemd/system/vocat.service ]; then
     echo "ERROR: VoCat systemd 服务文件未生成！" >&2
     exit 1
 fi

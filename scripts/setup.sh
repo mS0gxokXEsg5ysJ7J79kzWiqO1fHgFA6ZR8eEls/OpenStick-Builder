@@ -1,53 +1,66 @@
 #!/bin/sh -e
+# OpenStick-Builder/scripts/setup.sh
 
+# 启用非交互模式，避免构建过程卡在配置弹窗
 DEBIAN_FRONTEND=noninteractive
 DEBCONF_NONINTERACTIVE_SEEN=true
 
-# Faster apt configuration
+# 配置 dpkg 默认保留现有配置文件，加速静默安装
 echo 'force-confdef' >> /etc/dpkg/dpkg.cfg
 echo 'force-confold' >> /etc/dpkg/dpkg.cfg
 
+# 预设时区（上海）与中文 UTF-8 语言环境
 echo 'tzdata tzdata/Areas select Asia' | debconf-set-selections
 echo 'tzdata tzdata/Zones/Asia select Shanghai' | debconf-set-selections
 echo "locales locales/default_environment_locale select zh_CN.UTF-8" | debconf-set-selections
 echo "locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8, zh_CN.UTF-8 UTF-8" | debconf-set-selections
 rm -f "/etc/locale.gen"
 
-# Single apt update, upgrade, and install to reduce overhead
+# 更新软件源并一次性安装基础网络、调制解调器、排障及内存优化组件
 apt update -qqy
 apt upgrade -qqy --with-new-pkgs
 apt install -qqy --no-install-recommends \
-    build-essential \
-    dnsmasq \
-    libconfig11 \
-    libconfig-dev \
-    libc6-dev \
-    linux-libc-dev \
-    locales \
-    modemmanager \
-    netcat-traditional \
-    network-manager \
-    openssh-server \
-    qrtr-tools \
-    rmtfs \
-    sudo \
-    systemd-timesyncd \
-    tzdata \
-    wireguard-tools \
-    wpasupplicant \
-    bash-completion \
-    curl \
+	bc \
+	iw \
+	sudo \
+	curl \
 	wget \
-    ca-certificates \
-    zram-tools \
-    bc \
-    nftables \
-    mobile-broadband-provider-info \
-    iw \
-    rfkill \
-    hostapd
+	rmtfs \
+	pcscd \
+	tzdata \
+	iperf3 \
+	rfkill \
+	vnstat \
+	libccid \
+	locales \
+	tcpdump \
+	dnsmasq \
+	hostapd \
+	earlyoom \
+	iproute2 \
+	nftables \
+	mtr-tiny \
+	libc6-dev \
+	zram-tools \
+	qrtr-tools \
+	libconfig11 \
+	libqmi-utils \
+	iputils-ping \
+	libconfig-dev \
+	wpasupplicant \
+	openssh-server \
+	bind9-dnsutils \
+	linux-libc-dev \
+	network-manager \
+	ca-certificates \
+	build-essential \
+	wireguard-tools \
+	bash-completion \
+	systemd-timesyncd \
+	netcat-traditional \
+	mobile-broadband-provider-info
 
-# Cleanup in one go
+# 清理无用依赖、缓存、临时日志及机器唯一标识（确保刷机后重新生成）
 apt autoremove -qqy
 apt clean
 update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 LANGUAGE=zh_CN:zh
@@ -59,14 +72,14 @@ EOF
 rm -rf /var/lib/apt/lists/*
 rm -f /etc/machine-id
 rm -f /var/lib/dbus/machine-id
-rm /etc/ssh/ssh_host_*
+rm -f /etc/ssh/ssh_host_*
 find /var/log -type f -delete
 
-# Unlock root and set password to 1
+# 解锁 root 账号并将默认密码设为 1
 passwd -u root 2>/dev/null || true
 echo "root:1" | chpasswd
 
-# Allow root SSH password login (cover both sshd_config and sshd_config.d)
+# 允许 root 通过 SSH 密码登录（同时覆盖主配置与子配置目录）
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 mkdir -p /etc/ssh/sshd_config.d
@@ -75,7 +88,7 @@ PermitRootLogin yes
 PasswordAuthentication yes
 EOF
 
-# Restore default .bashrc from Debian skeleton
+# 恢复 root 默认 .bashrc 并追加常用彩色终端别名
 cp -f /etc/skel/.bashrc /root/.bashrc 2>/dev/null || true
 chmod 644 /root/.bashrc
 
@@ -93,54 +106,113 @@ alias du='du -hs'
 
 EOF
 
+# 日志纯内存化（保护 eMMC 闪存，限制最大占用 8MB）
 cat <<EOF >> /etc/systemd/journald.conf
-SystemMaxUse=300M
-SystemKeepFree=1G
+# 日志仅保存在内存 /run/log/journal/
+Storage=volatile
+# 运行时日志最大占用限制为 8MB
+RuntimeMaxUse=8M
 EOF
 
-# install dnsproxy (as a systemd service) and integrate with systemd-resolved
-bash /install_dnsproxy.sh systemd
+# 启用 earlyoom 防内存耗尽假死，屏蔽后台 apt 自动更新避免突发吃内存
+systemctl enable earlyoom || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer || true
 
-# Ensure NetworkManager and systemd-resolved are enabled and managing DNS (offline enable inside chroot)
+# 预装 VoCat（必须在修改 /etc/resolv.conf 之前执行，确保构建环境 DNS 正常）
+curl -fsSL https://raw.githubusercontent.com/MengMengCode/VoCat/master/scripts/install.sh -o /tmp/vocat_install.sh
+sed -i 's/systemctl enable --now/systemctl enable/g; s/systemctl start/true/g; s/systemctl restart/true/g; s/systemctl daemon-reload/true/g' /tmp/vocat_install.sh
+bash /tmp/vocat_install.sh || true
+rm -f /tmp/vocat_install.sh
+for svc in /etc/systemd/system/*vocat*.service /lib/systemd/system/*vocat*.service; do
+    [ -f "$svc" ] && systemctl enable "$(basename "$svc")" || true
+done
+if ! ls /etc/systemd/system/*vocat*.service /lib/systemd/system/*vocat*.service >/dev/null 2>&1; then
+    echo "ERROR: VoCat systemd 服务文件未生成！" >&2
+    exit 1
+fi
+
+# 启用网络管理、DHCP/DNS（br0 网桥）、防火墙及读卡器服务，默认关闭热点
 systemctl enable NetworkManager || true
-systemctl enable systemd-resolved || true
-ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-
-# Ensure DHCP/DNS for USB and WIFI is active (for clients on br0)
 systemctl enable dnsmasq
-
-# Enable nftables
 systemctl enable nftables
+systemctl disable hostapd || true
+systemctl enable pcscd.socket || true
 
-# Enable hostapd for WiFi AP
-systemctl enable hostapd
+# 开机自动唤醒 QMI 调制解调器进入在线模式（供 VoCat 直接调用）
+cat <<'EOF' > /etc/systemd/system/modem-online.service
+[Unit]
+Description=Set QMI Modem Online at Boot
+After=dev-wwan0qmi0.device
+Wants=dev-wwan0qmi0.device
 
-# Make sure ModemManager is enabled for LTE
-systemctl enable ModemManager
-systemctl enable rmtfs # unsure if needed i forgot why i added it. But builds take a long time so i don't want to remove it now
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/qmicli -p -d /dev/wwan0qmi0 --dms-set-operating-mode=online
+RemainAfterExit=yes
 
-# Time
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable modem-online.service
+
+# 启用基带远程文件系统与网络时间同步
+systemctl enable rmtfs
 systemctl enable systemd-timesyncd
 
+# 启用 vnstat 流量统计并降低闪存写入频率（每 60 分钟落盘一次）
+systemctl enable vnstat || true
+sed -i 's/^;\?SaveInterval .*/SaveInterval 60/' /etc/vnstat.conf
+
+# 屏蔽开机网络等待服务，加快启动速度
 systemctl mask systemd-networkd-wait-online.service
 
-# Prevent the accidental shutdown by power button
+# 忽略电源键事件，防止误触关机
 sed -i 's/^#HandlePowerKey=poweroff/HandlePowerKey=ignore/' /etc/systemd/logind.conf
 
-# Enable IPv4 and IPv6 forwarding
+# 极限优化 ZRAM（适配 512MB 内存：zstd 高压缩率 + 100% 容量）
+cat <<EOF > /etc/default/zramswap
+ALGO=zstd       # 压缩算法：高压缩率（3.5~4倍），适合 512MB 极限省内存
+PERCENT=100     # ZRAM 容量：物理 RAM 的 100%（约 512MB）
+PRIORITY=100    # Swap 优先级：100（高于普通磁盘 Swap）
+EOF
+
+# 开启 IPv4 与 IPv6 内核路由转发
 if [ -f /etc/sysctl.conf ]; then
-    # Uncomment existing lines if they exist
     sed -i -e 's/^#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' -e 's/^#net.ipv6.conf.all.forwarding=1/net.ipv6.conf.all.forwarding=1/' /etc/sysctl.conf
-    # Add the lines if they don't exist at all
     grep -q '^net.ipv4.ip_forward' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
     grep -q '^net.ipv6.conf.all.forwarding' /etc/sysctl.conf || echo 'net.ipv6.conf.all.forwarding=1' >> /etc/sysctl.conf
 else
-    # Create the file with the required settings
     cat <<EOF > /etc/sysctl.conf
-# Enable IPv4 forwarding
 net.ipv4.ip_forward=1
-
-# Enable IPv6 forwarding
 net.ipv6.conf.all.forwarding=1
 EOF
 fi
+
+# 内核内存极限调优、TCP BBR 拥塞控制与快速死链检测（防 4G/NAT 僵尸连接）
+cat <<EOF >> /etc/sysctl.conf
+# 关闭 Swap 预读，提升纯内存 ZRAM 读写效率
+vm.page-cluster=0
+# 积极将冷内存页压入 ZRAM（上限 200）
+vm.swappiness=180
+# 强制保留 16MB 应急物理内存，防止 Wi-Fi 驱动断流
+vm.min_free_kbytes=16384
+# 降低目录项与索引节点缓存回收倾向
+vm.vfs_cache_pressure=50
+# 启用 FQ 队列与 TCP BBR 拥塞控制
+net.core.default_qdisc=fq
+net.ipv4.tcp_congestion_control=bbr
+# 缩短 TCP Keepalive 检测周期（约 90 秒清除僵尸连接）
+net.ipv4.tcp_keepalive_time=60
+net.ipv4.tcp_keepalive_intvl=10
+net.ipv4.tcp_keepalive_probes=3
+EOF
+
+# 设置默认 DNS（必须放在脚本末尾，避免影响 chroot 构建期联网）
+rm -f /etc/resolv.conf
+cat <<EOF > /etc/resolv.conf
+nameserver 10.10.10.10
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+options timeout:2 attempts:3
+EOF

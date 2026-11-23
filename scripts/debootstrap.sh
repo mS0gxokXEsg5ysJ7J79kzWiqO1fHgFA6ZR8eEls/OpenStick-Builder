@@ -1,4 +1,5 @@
 #!/bin/sh -e
+# OpenStick-Builder/scripts/debootstrap.sh
 
 CHROOT=${CHROOT=$(pwd)/rootfs}
 RELEASE=${RELEASE=stable}
@@ -64,6 +65,11 @@ rm ${CHROOT}/install_dnsproxy.sh
 rm -f ${CHROOT}/setup.sh
 rm -f ${CHROOT}/usr/bin/qemu-aarch64-static
 echo -n > ${CHROOT}/root/.bash_history
+
+# 覆盖自定义 root 用户的 .bashrc 配置
+if [ -f configs/bashrc ]; then
+    install -m 644 configs/bashrc ${CHROOT}/root/.bashrc
+fi
 
 echo ${HOST_NAME} > ${CHROOT}/etc/hostname
 sed -i "/localhost/ s/$/ ${HOST_NAME}/" ${CHROOT}/etc/hosts

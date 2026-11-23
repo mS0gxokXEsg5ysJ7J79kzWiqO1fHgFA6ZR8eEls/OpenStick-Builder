@@ -121,7 +121,10 @@ systemctl mask apt-daily.timer apt-daily-upgrade.timer || true
 # 预装 VoCat（必须在修改 /etc/resolv.conf 之前执行，确保构建环境 DNS 正常）
 curl -fsSL https://raw.githubusercontent.com/MengMengCode/VoCat/master/scripts/install.sh -o /tmp/vocat_install.sh
 sed -i 's/systemctl enable --now/systemctl enable/g; s/systemctl start/true/g; s/systemctl restart/true/g; s/systemctl daemon-reload/true/g' /tmp/vocat_install.sh
+# 临时模拟 systemd 运行目录，防止 chroot 环境下跳过生成 vocat.service
+mkdir -p /run/systemd/system
 bash /tmp/vocat_install.sh || true
+rmdir /run/systemd/system 2>/dev/null || true
 rm -f /tmp/vocat_install.sh
 for svc in /etc/systemd/system/*vocat*.service /lib/systemd/system/*vocat*.service; do
     [ -f "$svc" ] && systemctl enable "$(basename "$svc")" || true

@@ -94,8 +94,10 @@ UseDNS no
 GSSAPIAuthentication no
 EOF
 
-# 恢复 root 默认 .bashrc 并追加常用彩色终端别名
-cp -f /etc/skel/.bashrc /root/.bashrc 2>/dev/null || true
+# 若未通过 configs/bashrc 预置，则保留默认逻辑；已预置则跳过覆盖
+if [ ! -f /root/.bashrc ]; then
+    cp -f /etc/skel/.bashrc /root/.bashrc 2>/dev/null || true
+fi
 chmod 644 /root/.bashrc
 
 cat <<EOF >>/etc/bash.bashrc
@@ -146,15 +148,15 @@ fi
 # 启用网络管理、DHCP/DNS（br0 网桥）、防火墙及读卡器服务
 systemctl enable NetworkManager || true
 systemctl enable dnsmasq
+if [ -f /etc/nftables.conf ]; then
+    sed -i 's/\biif "br0"/iifname "br0"/g; s/\boif "br0"/oifname "br0"/g; /redirect to :53/s/^/# /' /etc/nftables.conf
+fi
 systemctl enable nftables
 systemctl enable pcscd.socket || true
 
-# 默认屏蔽 hostapd（防止抢占 wlan0），同时完整保留 /etc/hostapd 配置与服务备份便于日后恢复
+# 默认禁用 hostapd 开机自启（配合删除仓库中 multi-user.target.wants/hostapd.service），完整保留 /etc/hostapd 配置便于日后恢复
 systemctl disable hostapd 2>/dev/null || true
-if [ -f /etc/systemd/system/hostapd.service ] && [ ! -L /etc/systemd/system/hostapd.service ]; then
-    mv /etc/systemd/system/hostapd.service /etc/systemd/system/hostapd.service.bak
-fi
-systemctl mask hostapd || true
+rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service
 
 # 开机自动设置 Wi-Fi 监管域为 CN（完整支持 1~13 信道）
 cat <<'EOF' > /etc/systemd/system/wifi-regdom.service

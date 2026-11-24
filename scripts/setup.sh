@@ -323,6 +323,12 @@ TMR
 systemctl enable wifi-watchdog.timer
 # ==============================================================================
 
+# 自动将 usb0 绑定到 br0 网桥（防止重启后 br0 处于 DOWN 导致 USB 无法 SSH）
+mkdir -p /etc/udev/rules.d
+cat <<'EOF' > /etc/udev/rules.d/99-usb0-bridge.rules
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="usb0", RUN+="/bin/sh -c 'for i in 1 2 3 4 5; do /sbin/ip link show br0 >/dev/null 2>&1 && break; sleep 1; done; /sbin/ip link set usb0 master br0; /sbin/ip link set usb0 up; /sbin/ip link set br0 up'"
+EOF
+
 # 设置默认 DNS（必须放在脚本末尾，避免影响 chroot 构建期联网）
 rm -f /etc/resolv.conf
 cat <<EOF > /etc/resolv.conf

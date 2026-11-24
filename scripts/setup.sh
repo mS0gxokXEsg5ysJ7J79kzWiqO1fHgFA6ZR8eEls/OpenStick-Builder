@@ -114,12 +114,13 @@ alias du='du -hs'
 
 EOF
 
-# 日志纯内存化（保护 eMMC 闪存，限制最大占用 8MB）
+# 开启日志持久化落盘（便于排查异常重启，限制最大占用 16MB 保护 eMMC 空间）
+mkdir -p /var/log/journal
 cat <<EOF >> /etc/systemd/journald.conf
-# 日志仅保存在内存 /run/log/journal/
-Storage=volatile
-# 运行时日志最大占用限制为 8MB
-RuntimeMaxUse=8M
+# 日志持久化保存在 /var/log/journal/
+Storage=persistent
+# 磁盘日志最大占用限制为 16MB
+SystemMaxUse=16M
 EOF
 
 # 缩短 systemd 关机/重启等待服务停止的超时时间（从 90 秒降至 10 秒）

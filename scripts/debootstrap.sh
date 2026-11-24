@@ -41,6 +41,7 @@ mount -o bind /run ${CHROOT}/run/
 # configs'n stuff
 mkdir -p ${CHROOT}/etc/systemd/system
 cp -a configs/system/* ${CHROOT}/etc/systemd/system
+rm -f ${CHROOT}/etc/systemd/system/multi-user.target.wants/hostapd*.service
 cp configs/nftables.conf ${CHROOT}/etc/nftables.conf
 mkdir -p ${CHROOT}/etc/NetworkManager/system-connections
 mkdir -p ${CHROOT}/etc/NetworkManager/conf.d

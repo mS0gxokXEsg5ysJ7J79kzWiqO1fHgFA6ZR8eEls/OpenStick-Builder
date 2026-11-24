@@ -31,6 +31,7 @@ apt install -qqy --no-install-recommends \
 	iperf3 \
 	rfkill \
 	vnstat \
+	sqlite3 \
 	libccid \
 	locales \
 	tcpdump \
@@ -155,9 +156,11 @@ fi
 systemctl enable nftables
 systemctl enable pcscd.socket || true
 
-# 默认禁用 hostapd 开机自启（配合删除仓库中 multi-user.target.wants/hostapd.service），完整保留 /etc/hostapd 配置便于日后恢复
-systemctl disable hostapd 2>/dev/null || true
-rm -f /etc/systemd/system/multi-user.target.wants/hostapd.service
+# 彻底禁用所有 hostapd 开机自启（覆盖 systemd 主服务、模板服务及 SysV init 脚本），完整保留配置与程序便于日后随时启用
+systemctl disable hostapd.service 'hostapd@*.service' 2>/dev/null || true
+update-rc.d hostapd disable 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/hostapd*.service
+rm -f /etc/systemd/system/network.target.wants/hostapd*.service
 
 # 开机自动设置 Wi-Fi 监管域为 CN（完整支持 1~13 信道）
 cat <<'EOF' > /etc/systemd/system/wifi-regdom.service

@@ -40,8 +40,8 @@ if "%FB_FOUND%"=="0" (
     goto WAIT_FASTBOOT
 )
 
-echo [检测通过] 已成功识别到 Fastboot 设备 ^(!FB_SN!^)，准备开始刷机！
-pause
+echo [检测通过] 已成功识别到 Fastboot 设备 ID: !FB_SN!，2 秒后自动开始刷机！
+timeout /t 2 /nobreak >nul
 
 REM ============================================================================
 REM 第一阶段：借助原厂 Bootloader 写入开源二级引导程序 lk2nd（获取基带导出权限）
@@ -50,8 +50,7 @@ fastboot erase boot
 fastboot flash boot lk2nd.img
 fastboot reboot
 
-echo [等待] 设备正在重启进入 lk2nd 模式，请等待电脑识别到新的 Fastboot 设备后再按任意键...
-pause
+call :WAIT_FB "lk2nd Fastboot"
 
 REM ============================================================================
 REM 第二阶段：抢救备份单机核心基带与出厂校准数据
@@ -73,12 +72,26 @@ fastboot erase lk2nd
 fastboot erase boot
 fastboot reboot bootloader
 
-echo ============================================================================
-echo [安全核查] 请立即前往当前文件夹检查以下 6 个文件是否均已生成且大小大于 0 KB：
-echo            fsc.bin / fsg.bin / modemst1.bin / modemst2.bin / persist.bin / sec.bin
-echo            确认无误（建议复制一份到桌面永久备份）后，再按任意键继续刷写分区表！
-echo ============================================================================
-pause
+REM 自动校验 6 个核心基带备份文件是否存在且大小大于 0 字节（防刷丢基带）
+set "BACKUP_OK=1"
+for %%F in (fsc.bin fsg.bin modemst1.bin modemst2.bin persist.bin sec.bin) do (
+    if not exist "%%F" (
+        echo [错误] 缺失核心基带备份文件: %%F
+        set "BACKUP_OK=0"
+    ) else (
+        for %%S in ("%%F") do if %%~zS EQU 0 (
+            echo [错误] 核心基带备份文件大小为 0 字节: %%F
+            set "BACKUP_OK=0"
+        )
+    )
+)
+if "%BACKUP_OK%"=="0" (
+    echo [中止] 基带备份校验未通过，为防止丢失基带已自动停止刷机！
+    pause
+    exit /b 1
+)
+echo [校验通过] 6 个核心基带文件均已生成且大小正常，准备进入第三阶段...
+call :WAIT_FB "底层 Bootloader Fastboot"
 
 REM ============================================================================
 REM 第三阶段：重构全盘 GPT 分区表并刷入 Debian 配套高通底层固件
@@ -108,8 +121,7 @@ fastboot erase rootfs
 fastboot reboot
 
 echo [进度] 底层固件与基带已全部就绪，即将刷入 Debian 系统！
-echo [等待] 请等待设备重启并再次被电脑识别到 Fastboot 设备后，按任意键继续...
-pause
+call :WAIT_FB "新 aboot Fastboot"
 
 REM ============================================================================
 REM 第五阶段：写入 Debian 主线内核与根文件系统
@@ -122,3 +134,29 @@ echo ===========================================================================
 echo [完成] Debian 已全部刷入完成！设备正在重启，请等待约 1 分钟后检查 USB 虚拟网卡。
 echo ============================================================================
 pause
+exit /b 0
+
+REM ============================================================================
+REM 子程序：自动轮询并识别 Fastboot 设备 ID（带 4 秒防旧连接残留延迟）
+REM ============================================================================
+:WAIT_FB
+set "STAGE_NAME=%~1"
+echo [等待重启] 正在等待设备重新进入 %STAGE_NAME% 模式...
+timeout /t 4 /nobreak >nul
+:WAIT_FB_LOOP
+set "FB_FOUND=0"
+set "FB_SN="
+for /f "tokens=1,2" %%A in ('fastboot devices 2^>nul') do (
+    if /i "%%B"=="fastboot" (
+        set "FB_FOUND=1"
+        set "FB_SN=%%A"
+    )
+)
+if "%FB_FOUND%"=="0" (
+    echo [轮询中] 暂未识别到 Fastboot ID，2 秒后自动重试...
+    timeout /t 2 /nobreak >nul
+    goto WAIT_FB_LOOP
+)
+echo [已就绪] 自动识别到 Fastboot 设备 ID: !FB_SN!（%STAGE_NAME%），继续执行...
+timeout /t 1 /nobreak >nul
+goto :eof

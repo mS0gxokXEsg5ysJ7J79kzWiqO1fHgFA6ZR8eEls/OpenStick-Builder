@@ -66,6 +66,11 @@ apt install -qqy --no-install-recommends \
 # 切换为上游签名的无线监管域数据库（匹配 6.12 内核内置证书，解决 country 00 验签失败）
 update-alternatives --set regulatory.db /lib/firmware/regulatory.db-upstream || true
 
+# 二次锁定东八区时区，防止 chroot 装包过程回退为 UTC (00)
+ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+echo "Asia/Shanghai" > /etc/timezone
+dpkg-reconfigure -f noninteractive tzdata
+
 # 清理无用依赖、缓存、临时日志及机器唯一标识（确保刷机后重新生成）
 apt autoremove -qqy
 apt clean
@@ -85,15 +90,18 @@ find /var/log -type f -delete
 passwd -u root 2>/dev/null || true
 echo "root:1" | chpasswd
 
-# 允许 root 通过 SSH 密码登录，并关闭 DNS 反向解析与 GSSAPI（防止 WinSCP/SSH 认证卡顿）
+# 允许 root 通过 SSH 密码登录，固化 /run/sshd 目录并关闭 DNS 反向解析与 GSSAPI（防止 WinSCP/SSH 认证卡顿）
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-mkdir -p /etc/ssh/sshd_config.d
+mkdir -p -m 0755 /run/sshd /etc/ssh/sshd_config.d /etc/tmpfiles.d
+echo "d /run/sshd 0755 root root -" > /etc/tmpfiles.d/sshd.conf
 cat <<EOF > /etc/ssh/sshd_config.d/99-allow-root.conf
 PermitRootLogin yes
 PasswordAuthentication yes
 UseDNS no
 GSSAPIAuthentication no
+ClientAliveInterval 30
+ClientAliveCountMax 2
 EOF
 
 # 若未通过 configs/bashrc 预置，则保留默认逻辑；已预置则跳过覆盖

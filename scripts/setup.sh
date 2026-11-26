@@ -12,6 +12,7 @@ echo 'force-confold' >> /etc/dpkg/dpkg.cfg
 # 预设时区（上海）与中文 UTF-8 语言环境
 echo 'tzdata tzdata/Areas select Asia' | debconf-set-selections
 echo 'tzdata tzdata/Zones/Asia select Shanghai' | debconf-set-selections
+rm -f /etc/localtime /etc/timezone
 echo "locales locales/default_environment_locale select zh_CN.UTF-8" | debconf-set-selections
 echo "locales locales/locales_to_be_generated multiselect en_US.UTF-8 UTF-8, zh_CN.UTF-8 UTF-8" | debconf-set-selections
 rm -f "/etc/locale.gen"
